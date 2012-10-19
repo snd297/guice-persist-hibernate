@@ -16,43 +16,46 @@
 
 package jdf.guicepersist.hibernate;
 
+import org.hibernate.SessionFactory;
+
 import com.google.inject.Inject;
 import com.google.inject.Provider;
-import com.wideplay.warp.persist.PersistenceService;
-import net.jcip.annotations.Immutable;
-import org.hibernate.SessionFactory;
+import com.google.inject.Singleton;
+import com.google.inject.persist.PersistService;
 
 /**
  * @author Dhanji R. Prasanna (dhanji@gmail.com)
  * @author Robbie Vanbrabant
  * @since 1.0
  */
-@Immutable
-class HibernatePersistenceService extends PersistenceService {
-    private final Provider<SessionFactory> sessionFactoryProvider;
+@Singleton
+class HibernatePersistenceService implements PersistService {
+	private final Provider<SessionFactory> sessionFactoryProvider;
 
-    @Inject
-    public HibernatePersistenceService(Provider<SessionFactory> sessionFactoryProvider) {
-        this.sessionFactoryProvider = sessionFactoryProvider;
-    }
+	@Inject
+	public HibernatePersistenceService(
+			Provider<SessionFactory> sessionFactoryProvider) {
+		this.sessionFactoryProvider = sessionFactoryProvider;
+	}
 
-    public void start() {
-        // the provider lazily loads, force start.
-        // does its own synchronization and simply returns
-        // a closed SessionFactory if it has been closed.
-        sessionFactoryProvider.get();
-    }
+	public void start() {
+		// the provider lazily loads, force start.
+		// does its own synchronization and simply returns
+		// a closed SessionFactory if it has been closed.
+		sessionFactoryProvider.get();
+	}
 
-    public synchronized void shutdown() {
-        // Hibernate silently lets this call pass
-        // if the SessionFactory has been closed already,
-        // but a SessionFactory is not thread safe,
-        // so we define this method as synchronized.
-        // If users use the SessionFactory directly, they're on their own.
-        sessionFactoryProvider.get().close();
-    }
+	public synchronized void stop() {
+		// Hibernate silently lets this call pass
+		// if the SessionFactory has been closed already,
+		// but a SessionFactory is not thread safe,
+		// so we define this method as synchronized.
+		// If users use the SessionFactory directly, they're on their own.
+		sessionFactoryProvider.get().close();
+	}
 
-    public String toString() {
-        return String.format("%s[sessionFactory: %s]",super.toString(), this.sessionFactoryProvider);
-    }
+	public String toString() {
+		return String.format("%s[sessionFactory: %s]", super.toString(),
+				this.sessionFactoryProvider);
+	}
 }
