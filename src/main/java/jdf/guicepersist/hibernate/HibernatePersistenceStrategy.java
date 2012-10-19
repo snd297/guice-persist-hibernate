@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.wideplay.warp.persist.hibernate;
+package jdf.guicepersist.hibernate;
 
 import com.google.inject.AbstractModule;
 import com.google.inject.Key;

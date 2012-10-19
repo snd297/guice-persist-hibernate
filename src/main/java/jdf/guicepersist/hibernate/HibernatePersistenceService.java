@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.wideplay.warp.persist.hibernate;
+package jdf.guicepersist.hibernate;
 
 import com.google.inject.Inject;
 import com.google.inject.Provider;

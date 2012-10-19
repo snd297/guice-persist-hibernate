@@ -14,150 +14,148 @@
  * limitations under the License.
  */
 
-package com.wideplay.warp.persist.hibernate;
+package jdf.guicepersist.hibernate;
 
-import com.google.inject.Provider;
-import com.wideplay.warp.persist.TransactionType;
-import com.wideplay.warp.persist.Transactional;
-import net.jcip.annotations.ThreadSafe;
+import java.lang.reflect.Method;
+
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
-import org.hibernate.FlushMode;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 
-import java.lang.reflect.Method;
+import com.google.inject.Provider;
+import com.google.inject.persist.Transactional;
 
 /**
  * @author Dhanji R. Prasanna (dhanji@gmail.com)
  */
-@ThreadSafe
 class HibernateLocalTxnInterceptor implements MethodInterceptor {
-    private final Provider<Session> sessionProvider;
+	private final Provider<Session> sessionProvider;
 
-    //make this customizable if there is a demand for it?
-    @Transactional
-    private static class Internal { }
+	// make this customizable if there is a demand for it?
+	@Transactional
+	private static class Internal {}
 
-    public HibernateLocalTxnInterceptor(Provider<Session> sessionProvider) {
-        this.sessionProvider = sessionProvider;
-    }
+	public HibernateLocalTxnInterceptor(Provider<Session> sessionProvider) {
+		this.sessionProvider = sessionProvider;
+	}
 
-    public Object invoke(MethodInvocation methodInvocation) throws Throwable {
-        Session session = sessionProvider.get();
+	public Object invoke(MethodInvocation methodInvocation) throws Throwable {
+		Session session = sessionProvider.get();
 
-        //allow silent joining of enclosing transactional methods (NOTE: this ignores the current method's txn-al settings)
-        if (session.getTransaction().isActive())
-            return methodInvocation.proceed();
+		// allow silent joining of enclosing transactional methods (NOTE: this
+		// ignores the current method's txn-al settings)
+		if (session.getTransaction().isActive())
+			return methodInvocation.proceed();
 
-        //read out transaction settings
-        Transactional transactional = readTransactionMetadata(methodInvocation);
+		// read out transaction settings
+		Transactional transactional = readTransactionMetadata(methodInvocation);
 
-        //read-only txn?
-        FlushMode savedFlushMode = FlushMode.AUTO;
-        if (TransactionType.READ_ONLY.equals(transactional.type()))
-            session.setFlushMode(FlushMode.MANUAL);
+		// no transaction already started, so start one and enforce its
+		// semantics
+		Transaction txn = session.beginTransaction();
+		Object result;
 
-        try {
-            //no transaction already started, so start one and enforce its semantics
-            Transaction txn = session.beginTransaction();
-            Object result;
+		try {
+			result = methodInvocation.proceed();
 
-            try {
-                result = methodInvocation.proceed();
+		} catch (Exception e) {
 
-            } catch(Exception e) {
+			// commit transaction only if rollback didnt occur
+			if (rollbackIfNecessary(transactional, e, txn))
+				txn.commit();
 
-                //commit transaction only if rollback didnt occur
-                if (rollbackIfNecessary(transactional, e, txn))
-                    txn.commit();
+			// propagate whatever exception is thrown anyway
+			throw e;
+		}
 
-                //propagate whatever exception is thrown anyway
-                throw e;
-            }
+		// everything was normal so commit the txn (do not move into try
+		// block as it interferes with the advised method's throwing
+		// semantics)
+		Exception commitException = null;
+		try {
+			txn.commit();
+		} catch (RuntimeException re) {
+			txn.rollback();
+			commitException = re;
+		}
 
-            //everything was normal so commit the txn (do not move into try block as it interferes with the advised method's throwing semantics)
-            Exception commitException = null;
-            try {
-                txn.commit();
-            } catch(RuntimeException re) {
-                txn.rollback();
-                commitException = re;
-            }
+		// propagate anyway
+		if (null != commitException)
+			throw commitException;
 
-            //propagate anyway
-            if (null != commitException)
-                throw commitException;
+		// or return result
+		return result;
+	}
 
-            //or return result
-            return result;
-        } finally {
+	private Transactional readTransactionMetadata(
+			MethodInvocation methodInvocation) {
+		Transactional transactional;
+		Method method = methodInvocation.getMethod();
 
-            //if read-only txn, then restore flushmode, default is automatic flush
-            if (session.isOpen() && TransactionType.READ_ONLY.equals(transactional.type()))
-                session.setFlushMode(savedFlushMode);
-        }
-    }
+		// try the class if there's nothing on the method (only go up one level
+		// in the hierarchy, to skip the proxy)
+		Class<?> targetClass = methodInvocation.getThis().getClass()
+				.getSuperclass();
 
-    private Transactional readTransactionMetadata(MethodInvocation methodInvocation) {
-        Transactional transactional;
-        Method method = methodInvocation.getMethod();
+		if (method.isAnnotationPresent(Transactional.class))
+			transactional = method.getAnnotation(Transactional.class);
 
-        //try the class if there's nothing on the method (only go up one level in the hierarchy, to skip the proxy)
-        Class<?> targetClass = methodInvocation.getThis().getClass().getSuperclass();
+		else if (targetClass.isAnnotationPresent(Transactional.class))
+			transactional = targetClass.getAnnotation(Transactional.class);
+		else
+			// if there is no transactional annotation of Warp's present, use
+			// the default
+			transactional = Internal.class.getAnnotation(Transactional.class);
+		return transactional;
+	}
 
-        if (method.isAnnotationPresent(Transactional.class))
-            transactional = method.getAnnotation(Transactional.class);
-        
-        else if (targetClass.isAnnotationPresent(Transactional.class))
-            transactional = targetClass.getAnnotation(Transactional.class);
-        else
-            //if there is no transactional annotation of Warp's present, use the default
-            transactional = Internal.class.getAnnotation(Transactional.class);
-        return transactional;
-    }
+	/**
+	 * 
+	 * @param transactional The metadata annotaiton of the method
+	 * @param e The exception to test for rollback
+	 * @param txn A Hibernate Transaction to issue rollbacks against
+	 * @return returns Returns true if rollback DID NOT HAPPEN (i.e. if commit
+	 *         should continue)
+	 */
+	private boolean rollbackIfNecessary(Transactional transactional,
+			Exception e, Transaction txn) {
+		boolean commit = true;
 
-    /**
-     *
-     * @param transactional The metadata annotaiton of the method
-     * @param e The exception to test for rollback
-     * @param txn A Hibernate Transaction to issue rollbacks against
-     * @return returns Returns true if rollback DID NOT HAPPEN (i.e. if commit should continue)
-     */
-    private boolean rollbackIfNecessary(Transactional transactional, Exception e, Transaction txn) {
-        boolean commit = true;
+		// check rollback clauses
+		for (Class<? extends Exception> rollBackOn : transactional.rollbackOn()) {
 
-        //check rollback clauses
-        for (Class<? extends Exception> rollBackOn : transactional.rollbackOn()) {
+			// if one matched, try to perform a rollback
+			if (rollBackOn.isInstance(e)) {
+				commit = false;
 
-            //if one matched, try to perform a rollback
-            if (rollBackOn.isInstance(e)) {
-                commit = false;
+				// check exceptOn clauses (supercedes rollback clause)
+				for (Class<? extends Exception> exceptOn : transactional
+						.ignore()) {
 
-                //check exceptOn clauses (supercedes rollback clause)
-                for (Class<? extends Exception> exceptOn : transactional.exceptOn()) {
+					// An exception to the rollback clause was found, DONT
+					// rollback (i.e. commit and throw anyway)
+					if (exceptOn.isInstance(e)) {
+						commit = true;
+						break;
+					}
+				}
 
-                    //An exception to the rollback clause was found, DONT rollback (i.e. commit and throw anyway)
-                    if (exceptOn.isInstance(e)) {
-                        commit = true;
-                        break;
-                    }
-                }
+				// rollback only if nothing matched the exceptOn check
+				if (!commit) {
+					txn.rollback();
+				}
+				// otherwise continue to commit
 
-                //rollback only if nothing matched the exceptOn check
-                if (!commit) {
-                    txn.rollback();
-                }
-                //otherwise continue to commit
+				break;
+			}
+		}
 
-                break;
-            }
-        }
+		return commit;
+	}
 
-        return commit;
-    }
-
-    public String toString() {
-        return String.format("%s[session: %s]",super.toString(), this.sessionProvider);
-    }
+	public String toString() {
+		return String.format("%s[session: %s]", super.toString(),
+				this.sessionProvider);
+	}
 }
