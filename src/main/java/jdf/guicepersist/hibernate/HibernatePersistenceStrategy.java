@@ -64,7 +64,7 @@ public class HibernatePersistenceStrategy implements PersistenceStrategy {
             // Need WorkManager here so we can register it on the PersistenceFilter if the UnitOfWork is REQUEST
             this.workManager = new HibernateWorkManager(sfProvider, config.getUnitOfWork(), annotationDebugString);
             // Needs to be able to initialize Provider<SessionFactory>
-            this.pService = new HibernatePersistenceService(sfProvider);
+            this.pService = new HibernatePersistService(sfProvider);
         }
         
         @Override

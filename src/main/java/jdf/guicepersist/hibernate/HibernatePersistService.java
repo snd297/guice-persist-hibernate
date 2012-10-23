@@ -16,12 +16,15 @@
 
 package jdf.guicepersist.hibernate;
 
+import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 
+import com.google.common.base.Preconditions;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
 import com.google.inject.persist.PersistService;
+import com.google.inject.persist.UnitOfWork;
 
 /**
  * @author Dhanji R. Prasanna (dhanji@gmail.com)
@@ -29,11 +32,13 @@ import com.google.inject.persist.PersistService;
  * @since 1.0
  */
 @Singleton
-class HibernatePersistenceService implements PersistService {
+class HibernatePersistService implements Provider<Session>, UnitOfWork,
+		PersistService {
+	private final ThreadLocal<Session> session = new ThreadLocal<Session>();
 	private final Provider<SessionFactory> sessionFactoryProvider;
 
 	@Inject
-	public HibernatePersistenceService(
+	HibernatePersistService(
 			Provider<SessionFactory> sessionFactoryProvider) {
 		this.sessionFactoryProvider = sessionFactoryProvider;
 	}
@@ -58,4 +63,47 @@ class HibernatePersistenceService implements PersistService {
 		return String.format("%s[sessionFactory: %s]", super.toString(),
 				this.sessionFactoryProvider);
 	}
+
+	public Session get() {
+		if (!isWorking()) {
+			begin();
+		}
+
+		Session em = session.get();
+		Preconditions
+				.checkState(
+						null != em,
+						"Requested EntityManager outside work unit. "
+								+ "Try calling UnitOfWork.begin() first, or use a PersistFilter if you "
+								+ "are inside a servlet environment.");
+
+		return em;
+	}
+
+	public boolean isWorking() {
+		return session.get() != null;
+	}
+
+	public void begin() {
+		Preconditions
+				.checkState(
+						null == session.get(),
+						"Work already begun on this thread. Looks like you have called UnitOfWork.begin() twice"
+								+ " without a balancing call to end() in between.");
+
+		session.set(sessionFactoryProvider.get().openSession());
+	}
+
+	public void end() {
+		Session em = session.get();
+
+		// Let's not penalize users for calling end() multiple times.
+		if (null == em) {
+			return;
+		}
+
+		em.close();
+		session.remove();
+	}
+
 }

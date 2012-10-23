@@ -16,15 +16,18 @@
 
 package jdf.guicepersist.hibernate;
 
+import javax.annotation.concurrent.Immutable;
+import javax.annotation.concurrent.ThreadSafe;
+
+import org.hibernate.SessionFactory;
+import org.hibernate.cfg.Configuration;
+
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Key;
 import com.google.inject.Provider;
-import com.wideplay.warp.persist.internal.LazyReference;
-import net.jcip.annotations.Immutable;
-import net.jcip.annotations.ThreadSafe;
-import org.hibernate.SessionFactory;
-import org.hibernate.cfg.Configuration;
 
 /**
  * @author Dhanji R. Prasanna (dhanji@gmail.com)
@@ -34,41 +37,49 @@ import org.hibernate.cfg.Configuration;
 @ThreadSafe
 class SessionFactoryProvider implements Provider<SessionFactory> {
 
-    // Injecting the Injector because we can't inject a Hibernate Configuration
-    // directly. When using multiple Hibernate modules the user has to bind at least
-    // one Configuration using a binding annotation, and we don't know it up front.
-    @Inject // injecting finals works and has the same thread safety guarantees as constructors.
-    private final Injector injector = null;
+	// Injecting the Injector because we can't inject a Hibernate Configuration
+	// directly. When using multiple Hibernate modules the user has to bind at
+	// least
+	// one Configuration using a binding annotation, and we don't know it up
+	// front.
+	@Inject
+	// injecting finals works and has the same thread safety guarantees as
+	// constructors.
+	private final Injector injector = null;
 
-    /**
-     * Lazily loaded SessionFactory.
-     */
-    private LazyReference<SessionFactory> sessionFactory =
-            LazyReference.of(new Provider<SessionFactory>() {
-                public SessionFactory get() {
-                    return injector.getInstance(configurationKey).buildSessionFactory();
-                }
-            });
+	/**
+	 * Lazily loaded SessionFactory.
+	 */
+	private Supplier<SessionFactory> sessionFactory = Suppliers
+			.memoize(new Supplier<SessionFactory>() {
+				public SessionFactory get() {
+					return injector.getInstance(configurationKey)
+							.buildSessionFactory();
+				}
+			});
 
-    /**
-     * Key to which the user has bound the Hibernate Configuration.
-     * Simply points to the Configuration class if the user did not specify an annotation.
-     */
-    private final Key<Configuration> configurationKey;
-    
-    /** Debugging to include in toString. */
-    private final String annotationDebug;
+	/**
+	 * Key to which the user has bound the Hibernate Configuration. Simply
+	 * points to the Configuration class if the user did not specify an
+	 * annotation.
+	 */
+	private final Key<Configuration> configurationKey;
 
-    SessionFactoryProvider(Key<Configuration> configurationKey, String annotationDebug) {
-        this.configurationKey = configurationKey;
-        this.annotationDebug = annotationDebug;
-    }
+	/** Debugging to include in toString. */
+	private final String annotationDebug;
 
-    public SessionFactory get() {
-        return sessionFactory.get();
-    }
+	SessionFactoryProvider(Key<Configuration> configurationKey,
+			String annotationDebug) {
+		this.configurationKey = configurationKey;
+		this.annotationDebug = annotationDebug;
+	}
 
-    public String toString() {
-        return String.format("%s[boundTo: %s]", super.toString(), this.annotationDebug);
-    }
+	public SessionFactory get() {
+		return sessionFactory.get();
+	}
+
+	public String toString() {
+		return String.format("%s[boundTo: %s]", super.toString(),
+				this.annotationDebug);
+	}
 }
