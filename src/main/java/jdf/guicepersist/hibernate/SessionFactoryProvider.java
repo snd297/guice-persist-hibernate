@@ -68,7 +68,8 @@ class SessionFactoryProvider implements Provider<SessionFactory> {
 	/** Debugging to include in toString. */
 	private final String annotationDebug;
 
-	SessionFactoryProvider(Key<Configuration> configurationKey,
+	SessionFactoryProvider(
+			Key<Configuration> configurationKey,
 			String annotationDebug) {
 		this.configurationKey = configurationKey;
 		this.annotationDebug = annotationDebug;

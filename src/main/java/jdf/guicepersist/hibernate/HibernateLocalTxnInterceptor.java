@@ -23,103 +23,113 @@ import org.aopalliance.intercept.MethodInvocation;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 
-import com.google.inject.Provider;
+import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import com.google.inject.persist.UnitOfWork;
 
 /**
  * @author Dhanji R. Prasanna (dhanji@gmail.com)
  */
 class HibernateLocalTxnInterceptor implements MethodInterceptor {
-	private final Provider<Session> sessionProvider;
+	@Inject
+	private final HibernatePersistService emProvider = null;
 
-	// make this customizable if there is a demand for it?
+	@Inject
+	private final UnitOfWork unitOfWork = null;
+
 	@Transactional
 	private static class Internal {}
 
-	public HibernateLocalTxnInterceptor(Provider<Session> sessionProvider) {
-		this.sessionProvider = sessionProvider;
-	}
+	// Tracks if the unit of work was begun implicitly by this transaction.
+	private final ThreadLocal<Boolean> didWeStartWork = new ThreadLocal<Boolean>();
 
 	public Object invoke(MethodInvocation methodInvocation) throws Throwable {
-		Session session = sessionProvider.get();
 
-		// allow silent joining of enclosing transactional methods (NOTE: this
-		// ignores the current method's txn-al settings)
-		if (session.getTransaction().isActive())
-			return methodInvocation.proceed();
+		// Should we start a unit of work?
+		if (!emProvider.isWorking()) {
+			emProvider.begin();
+			didWeStartWork.set(true);
+		}
 
-		// read out transaction settings
 		Transactional transactional = readTransactionMetadata(methodInvocation);
+		Session em = this.emProvider.get();
 
-		// no transaction already started, so start one and enforce its
-		// semantics
-		Transaction txn = session.beginTransaction();
+		// Allow 'joining' of transactions if there is an enclosing
+		// @Transactional method.
+		if (em.getTransaction().isActive()) {
+			return methodInvocation.proceed();
+		}
+
+		final Transaction txn = em.beginTransaction();
+
 		Object result;
-
 		try {
 			result = methodInvocation.proceed();
 
 		} catch (Exception e) {
-
 			// commit transaction only if rollback didnt occur
-			if (rollbackIfNecessary(transactional, e, txn))
+			if (rollbackIfNecessary(transactional, e, txn)) {
 				txn.commit();
+			}
 
 			// propagate whatever exception is thrown anyway
 			throw e;
+		} finally {
+			// Close the em if necessary (guarded so this code doesn't run
+			// unless catch fired).
+			if (null != didWeStartWork.get() && !txn.isActive()) {
+				didWeStartWork.remove();
+				unitOfWork.end();
+			}
 		}
 
-		// everything was normal so commit the txn (do not move into try
-		// block as it interferes with the advised method's throwing
-		// semantics)
-		Exception commitException = null;
+		// everything was normal so commit the txn (do not move into try block
+		// above as it
+		// interferes with the advised method's throwing semantics)
 		try {
 			txn.commit();
-		} catch (RuntimeException re) {
-			txn.rollback();
-			commitException = re;
+		} finally {
+			// close the em if necessary
+			if (null != didWeStartWork.get()) {
+				didWeStartWork.remove();
+				unitOfWork.end();
+			}
 		}
-
-		// propagate anyway
-		if (null != commitException)
-			throw commitException;
 
 		// or return result
 		return result;
 	}
 
+	// TODO(dhanji): Cache this method's results.
 	private Transactional readTransactionMetadata(
 			MethodInvocation methodInvocation) {
 		Transactional transactional;
 		Method method = methodInvocation.getMethod();
+		Class<?> targetClass = methodInvocation.getThis().getClass();
 
-		// try the class if there's nothing on the method (only go up one level
-		// in the hierarchy, to skip the proxy)
-		Class<?> targetClass = methodInvocation.getThis().getClass()
-				.getSuperclass();
-
-		if (method.isAnnotationPresent(Transactional.class))
-			transactional = method.getAnnotation(Transactional.class);
-
-		else if (targetClass.isAnnotationPresent(Transactional.class))
+		transactional = method.getAnnotation(Transactional.class);
+		if (null == transactional) {
+			// If none on method, try the class.
 			transactional = targetClass.getAnnotation(Transactional.class);
-		else
-			// if there is no transactional annotation of Warp's present, use
-			// the default
+		}
+		if (null == transactional) {
+			// If there is no transactional annotation present, use the default
 			transactional = Internal.class.getAnnotation(Transactional.class);
+		}
+
 		return transactional;
 	}
 
 	/**
+	 * Returns True if rollback DID NOT HAPPEN (i.e. if commit should continue).
 	 * 
 	 * @param transactional The metadata annotaiton of the method
 	 * @param e The exception to test for rollback
-	 * @param txn A Hibernate Transaction to issue rollbacks against
-	 * @return returns Returns true if rollback DID NOT HAPPEN (i.e. if commit
-	 *         should continue)
+	 * @param txn A JPA Transaction to issue rollbacks on
 	 */
 	private boolean rollbackIfNecessary(Transactional transactional,
-			Exception e, Transaction txn) {
+			Exception e,
+			Transaction txn) {
 		boolean commit = true;
 
 		// check rollback clauses
@@ -129,19 +139,19 @@ class HibernateLocalTxnInterceptor implements MethodInterceptor {
 			if (rollBackOn.isInstance(e)) {
 				commit = false;
 
-				// check exceptOn clauses (supercedes rollback clause)
+				// check ignore clauses (supercedes rollback clause)
 				for (Class<? extends Exception> exceptOn : transactional
 						.ignore()) {
-
-					// An exception to the rollback clause was found, DONT
-					// rollback (i.e. commit and throw anyway)
+					// An exception to the rollback clause was found, DON'T
+					// rollback
+					// (i.e. commit and throw anyway)
 					if (exceptOn.isInstance(e)) {
 						commit = true;
 						break;
 					}
 				}
 
-				// rollback only if nothing matched the exceptOn check
+				// rollback only if nothing matched the ignore check
 				if (!commit) {
 					txn.rollback();
 				}
@@ -152,10 +162,5 @@ class HibernateLocalTxnInterceptor implements MethodInterceptor {
 		}
 
 		return commit;
-	}
-
-	public String toString() {
-		return String.format("%s[session: %s]", super.toString(),
-				this.sessionProvider);
 	}
 }

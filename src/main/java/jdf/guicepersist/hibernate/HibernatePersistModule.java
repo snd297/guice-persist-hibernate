@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2008 Wideplay Interactive.
+ * Copyright (C) 2010 Google, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,33 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package jdf.guicepersist.hibernate;
 
 import java.util.Properties;
 
-import javax.persistence.EntityManagerFactory;
-
 import org.aopalliance.intercept.MethodInterceptor;
 import org.hibernate.Session;
+import org.hibernate.SessionFactory;
 
 import com.google.common.base.Preconditions;
+import com.google.inject.Singleton;
 import com.google.inject.persist.PersistModule;
 import com.google.inject.persist.PersistService;
 import com.google.inject.persist.UnitOfWork;
 import com.google.inject.util.Providers;
 
 /**
- * @author Sam Donnelly
+ * Hibernate provider for guice persist.
+ * 
+ * @author dhanji@gmail.com (Dhanji R. Prasanna)
  */
-public class HibernatePersistModule extends PersistModule {
-
+public final class HibernatePersistModule extends PersistModule {
 	private final String jpaUnit;
 
-	public HibernatePersistModule(String hibernateUnit) {
-		Preconditions.checkArgument(
-				null != hibernateUnit && hibernateUnit.length() > 0,
-				"Hibernate unit name must be a non-empty string.");
-		this.jpaUnit = hibernateUnit;
+	public HibernatePersistModule(String jpaUnit) {
+		Preconditions.checkArgument(null != jpaUnit && jpaUnit.length() > 0,
+				"JPA unit name must be a non-empty string.");
+		this.jpaUnit = jpaUnit;
 	}
 
 	private Properties properties;
@@ -57,25 +58,33 @@ public class HibernatePersistModule extends PersistModule {
 					.toProvider(Providers.<Properties> of(null));
 		}
 
+		bind(HibernatePersistService.class).in(Singleton.class);
+
 		bind(PersistService.class).to(HibernatePersistService.class);
 		bind(UnitOfWork.class).to(HibernatePersistService.class);
 		bind(Session.class).toProvider(HibernatePersistService.class);
-		bind(EntityManagerFactory.class)
-				.toProvider(
-						JpaPersistService.EntityManagerFactoryProvider.class);
+		bind(SessionFactory.class)
+				.toProvider(SessionFactoryProvider.class);
 
-		transactionInterceptor = new JpaLocalTxnInterceptor();
+		transactionInterceptor = new HibernateLocalTxnInterceptor();
 		requestInjection(transactionInterceptor);
-
-		// Bind dynamic finders.
-		for (Class<?> finder : dynamicFinders) {
 
 	}
 
 	@Override
 	protected MethodInterceptor getTransactionInterceptor() {
-		// TODO Auto-generated method stub
-		throw new UnsupportedOperationException();
+		return transactionInterceptor;
+	}
+
+	/**
+	 * Configures the JPA persistence provider with a set of properties.
+	 * 
+	 * @param properties A set of name value pairs that configure a JPA
+	 *            persistence provider as per the specification.
+	 */
+	public HibernatePersistModule properties(Properties properties) {
+		this.properties = properties;
+		return this;
 	}
 
 }

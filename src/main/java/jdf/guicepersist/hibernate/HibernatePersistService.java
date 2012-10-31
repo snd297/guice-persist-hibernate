@@ -95,14 +95,14 @@ class HibernatePersistService implements Provider<Session>, UnitOfWork,
 	}
 
 	public void end() {
-		Session em = session.get();
+		Session s = session.get();
 
 		// Let's not penalize users for calling end() multiple times.
-		if (null == em) {
+		if (null == s) {
 			return;
 		}
 
-		em.close();
+		s.close();
 		session.remove();
 	}
 
